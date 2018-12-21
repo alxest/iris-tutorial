@@ -4,6 +4,8 @@ In this exercise, we prove the correctness of a spin lock module.
 From iris.base_logic.lib Require Import invariants.
 From iris.heap_lang Require Import proofmode notation.
 
+Ltac wp_exec := repeat (wp_pure _ || wp_load || wp_store).
+
 Definition newlock : val := λ: <>,
   ref #false.
 Definition try_acquire : val := λ: "l",
@@ -63,6 +65,52 @@ Section proof.
   Definition is_lock (lk : val) (R : iProp Σ) : iProp Σ :=
     (∃ l: loc, ⌜ lk = #l ⌝ ∧ inv lockN (lock_inv l R))%I.
 
+  Lemma newlock_spec_trial (R : iProp Σ):
+    {{{ R }}} newlock #() {{{ lk, RET lk; is_lock lk R }}}.
+  Proof.
+    iIntros (A) "B C".
+    unfold newlock.
+    wp_lam. simpl.
+    wp_alloc loc as "LOC".
+    iApply "C".
+    iExists _.
+    iSplit.
+    - iPureIntro. reflexivity.
+    - Fail iMod (inv_alloc lockN _ (lock_inv loc R) with "[B LOC]") as "#Hinv".
+(* Tactic failure: iMod: cannot eliminate modality  (|={?E}=> inv lockN (lock_inv loc R))%I in (inv lockN (lock_inv loc R)) *)
+      red.
+      rewrite seal_eq. cbn. red.
+      unfold environments.of_envs. simpl.
+      econstructor.
+      intros.
+      unfold inv.
+      rewrite seal_eq. cbn.
+      unfold inv_def.
+  Abort.
+
+  Lemma newlock_spec_trial (R : iProp Σ):
+    {{{ R }}} newlock #() {{{ lk, RET lk; is_lock lk R }}}.
+  Proof.
+    iIntros (A) "B C".
+    unfold newlock.
+    wp_lam. simpl.
+    iApply wp_fupd. (* <-------------------- "inv_alloc" needs this *)
+    wp_alloc loc as "LOC".
+    iApply "C".
+    unfold is_lock.
+
+    (* iAssert (|={⊤}=> True)%I with "[B LOC]" as "TMP". *)
+    (* { iMod (inv_alloc lockN _ (lock_inv loc R) with "[B LOC]") as "#Hinv". *)
+    (*   { iExists _. iFrame. } *)
+    (*   eauto. *)
+    (* } *)
+
+    iMod (inv_alloc lockN _ (lock_inv loc R) with "[B LOC]") as "#Hinv".
+    { iExists _. iFrame. }
+    iModIntro.
+    iExists _. iSplit; eauto.
+  Qed.
+
   (** The main proofs. *)
   Lemma newlock_spec (R : iProp Σ):
     {{{ R }}} newlock #() {{{ lk, RET lk; is_lock lk R }}}.
@@ -94,10 +142,21 @@ Section proof.
 
     *)
     destruct b.
-    - wp_cas_fail. iMod ("Hclose" with "[Hl]") as "_".
+    - wp_cas_fail.
+      iMod ("Hclose" with "[Hl]") as "Hclose_again". { iNext. iExists true. iFrame. }
+      iModIntro.
+
+      (* exercise *)
+
+      iDestruct "HR" as "#HR". iDestruct "HR" as %HR.
+      (* iSpecialize "HΦ" with #false. *)
+      (* iSpecialize ("HΦ" #false). *)
+      iApply "HΦ". auto.
+    - wp_cas_suc. iMod ("Hclose" with "[Hl]") as "_".
       { iNext. iExists true. iFrame. }
-      iModIntro. (* exercise *)
-  Admitted.
+      iModIntro.
+      iApply "HΦ". auto.
+  Qed.
 
   (** *Exercise*: prove the spec of [acquire]. Since [acquire] is a recursive
   function, you should use the tactic [iLöb] for Löb induction. Use the tactic
@@ -106,7 +165,18 @@ Section proof.
     {{{ is_lock lk R }}} acquire lk {{{ RET #(); R }}}.
   Proof.
     (* exercise *)
-  Admitted.
+    iIntros (P) "#LOCK PROP".
+    (* iDestruct "LOCK" as (loc ->) "#INV". *)
+    iLöb as "IH".
+    unfold acquire.
+    wp_rec. simpl.
+    wp_apply (try_acquire_spec with "LOCK").
+    iIntros (b) "B".
+    destruct b.
+    - wp_exec. iApply "PROP". iExact "B".
+    - wp_if.
+      iApply "IH". iNext. iApply "PROP".
+  Qed.
 
   (** *Exercise*: prove the spec of [release]. At a certain point in this proof,
   you need to open the invariant. For this you can use:
@@ -119,5 +189,20 @@ Section proof.
     {{{ is_lock lk R ∗ R }}} release lk {{{ RET #(); True }}}.
   Proof.
     (* exercise *)
-  Admitted.
+    iIntros (P) "[#LOCK INV0] PROP".
+    iDestruct "LOCK" as (loc ->) "#INV1".
+    simpl.
+    Fail iInv lockN as (b) "[Hl HR]" "Hclose". (* WHY?????? *)
+    simpl.
+    unfold release.
+    wp_lam. simpl.
+    wp_exec.
+    iInv lockN as (b) "[Hl HR]" "Hclose". iClear "INV1".
+    wp_exec.
+    iMod ("Hclose" with "[Hl INV0]") as "Hclose_again". { iNext. iExists false. iFrame. }
+    iModIntro.
+    iApply "PROP".
+    eauto.
+  Qed.
+
 End proof.

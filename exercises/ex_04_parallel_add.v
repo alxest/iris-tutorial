@@ -8,6 +8,11 @@ From iris.base_logic.lib Require Import invariants.
 From iris.heap_lang Require Import lib.par proofmode notation.
 From tutorial Require Import ex_03_spinlock.
 
+Print heap_lang.
+Eval simpl in (@language.prim_step heap_lang).
+
+Ltac wp_exec := repeat (wp_pure _ || wp_load || wp_store).
+
 (** The program as a heap-lang expression. We use the heap-lang [par] module for
 parallel composition. *)
 Definition parallel_add : expr :=
@@ -37,18 +42,55 @@ Section proof1.
     unfold parallel_add. wp_alloc r as "Hr". wp_let.
     wp_apply (newlock_spec (parallel_add_inv_1 r) with "[Hr]").
     { (* exercise *)
-      admit. }
+      unfold parallel_add_inv_1. iExists _. iFrame.
+    }
     iIntros (l) "#Hl". wp_let.
-    wp_apply (wp_par (λ _, True%I) (λ _, True%I)).
+    (* Q: How does the concept of "logically atomic" (in iris 1.0) appear? *)
+    (* Iris 3.0
+Notice, however, that the base logic does not have a notion of “threads” or “programs”,
+but only of
+separation
+. Ultimately, the logic does not care about “who” owns the resources
+under consideration; it is only concerned with reasoning about consequences of ownership
+and how it can be merged and split disjointly. 
+     *)
+    About wp_par.
+    Goal 
+∀ (Σ : gFunctors) (heapG0 : heapG Σ), spawnG Σ
+                                      → ∀ (Ψ1 Ψ2 : val → iProp Σ) (e1 e2 : expr) (Φ : val → iProp Σ), 
+                                      WP e1 {{ v, Ψ1 v }}
+                                      -∗ WP e2 {{ v, Ψ2 v }}
+                                         -∗ (∀ v1 v2 : val, Ψ1 v1 ∗ Ψ2 v2 -∗ ▷ Φ (v1, v2)%V)
+                                            -∗ WP e1 ||| e2 {{ v, Φ v }}.
+Proof.
+  intros.
+  iIntros.
+Abort.
+    wp_apply (par_spec (λ _, True%I) (λ _, True%I)).
+    (* wp_apply (wp_par (λ _, True%I) (λ _, True%I)). *)
     - wp_apply (acquire_spec with "Hl"). iDestruct 1 as (n) "[Hr %]".
       wp_seq. wp_load. wp_op. wp_store.
       wp_apply (release_spec with "[Hr $Hl]"); [|done].
       iExists _. iFrame "Hr". iPureIntro. by apply Zeven_plus_Zeven.
     - (* exercise *)
-      admit.
+      wp_apply (acquire_spec with "Hl"). iDestruct 1 as (n) "[Hr %]".
+      Local Opaque release.
+      wp_exec.
+      Local Transparent release.
+      wp_apply (release_spec); eauto. Undo 1. (* we lost "Hr" *)
+      iApply (release_spec with "[Hr]").
+      + iSplit; eauto.
+        unfold parallel_add_inv_1. iExists _. iSplit; eauto.
+        iPureIntro. apply Zeven_plus_Zeven; auto. econstructor.
+      + eauto.
     - (* exercise *)
-      admit.
-  Admitted.
+      iIntros.
+      iNext.
+      wp_seq.
+      wp_apply (acquire_spec with "Hl"). iDestruct 1 as (n) "[Hr %]".
+      wp_exec. iApply "Post". eauto.
+  Qed.
+
 End proof1.
 
 (** 2nd proof : we prove that the program returns 4 exactly.
@@ -106,10 +148,18 @@ Section proof2.
     iMod (ghost_var_alloc 0) as (γ2) "[Hγ2● Hγ2◯]".
     wp_apply (newlock_spec (parallel_add_inv_2 r γ1 γ2) with "[Hr Hγ1● Hγ2●]").
     { (* exercise *)
-      admit. }
+      unfold parallel_add_inv_2.
+      iExists _, _.
+      iFrame.
+    }
     iIntros (l) "#Hl". wp_let.
-    wp_apply (wp_par (λ _, own γ1 (◯ Excl' 2)) (λ _, own γ2 (◯ Excl' 2))
+    (**********************************************)
+    (* ownership of ghost resources are splitted! *)
+    (**********************************************)
+    wp_apply (par_spec (λ _, own γ1 (◯ Excl' 2)) (λ _, own γ2 (◯ Excl' 2))
                 with "[Hγ1◯] [Hγ2◯]").
+    (* wp_apply (wp_par (λ _, own γ1 (◯ Excl' 2)) (λ _, own γ2 (◯ Excl' 2)) *)
+    (*             with "[Hγ1◯] [Hγ2◯]"). *)
     - wp_apply (acquire_spec with "Hl"). iDestruct 1 as (n1 n2) "(Hr & Hγ1● & Hγ2●)".
       wp_seq. wp_load. wp_op. wp_store.
       iDestruct (ghost_var_agree with "Hγ1● Hγ1◯") as %->.
@@ -117,10 +167,61 @@ Section proof2.
       wp_apply (release_spec with "[- $Hl Hγ1◯]"); [|by auto].
       iExists _, _. iFrame "Hγ1● Hγ2●". rewrite (_ : 2 + n2 = 0 + n2 + 2); [done|ring].
     - (* exercise *)
-      admit.
+      wp_apply (acquire_spec); eauto.
+      iDestruct 1 as (n1 n2) "(Hr & Hγ1● & Hγ2●)".
+      wp_seq. wp_load. wp_op. wp_store.
+      iDestruct (ghost_var_agree with "Hγ2● Hγ2◯") as %->.
+      iMod (ghost_var_update γ2 2 with "Hγ2● Hγ2◯") as "[Hγ2● Hγ2◯]".
+      wp_apply (release_spec with "[Hr Hγ1● Hγ2●]"); cycle 1.
+      {
+        Fail iMod (ghost_var_update γ2 2 with "Hγ1● Hγ1◯") as "[Hγ1● Hγ1◯]". (* ?????????? *)
+        eauto.
+      }
+      iSplit; eauto.
+      unfold parallel_add_inv_2.
+      iExists _, _. iFrame.
+      replace (n1 + 2) with (n1 + 0 + 2); eauto.
+      omega.
     - (* exercise *)
-      admit.
-  Admitted.
+      iIntros (v1 v2) "OWN".
+      iNext.
+      wp_seq.
+      wp_apply (acquire_spec with "Hl"). iDestruct 1 as (n1 n2) "(Hr & Hγ1● & Hγ2●)".
+      iDestruct "OWN" as "[Hγ1◯ Hγ2◯]".
+      iDestruct (ghost_var_agree with "Hγ1● Hγ1◯") as %->.
+      iDestruct (ghost_var_agree with "Hγ2● Hγ2◯") as %->.
+      wp_exec.
+      change (2 + 2) with 4.
+      iApply "Post".
+      eauto.
+  Qed.
+
+  Lemma parallel_add_spec_2_weird :
+    {{{ True }}} parallel_add {{{ RET #4; True }}}.
+  Proof.
+    iIntros (Φ) "_ Post".
+    unfold parallel_add. wp_alloc r as "Hr". wp_let.
+    iMod (ghost_var_alloc 0) as (γ1) "[Hγ1● Hγ1◯]".
+    iMod (ghost_var_alloc 0) as (γ2) "[Hγ2● Hγ2◯]".
+    wp_apply (newlock_spec (parallel_add_inv_2 r γ1 γ2) with "[Hr Hγ1● Hγ2●]").
+    { (* exercise *)
+      unfold parallel_add_inv_2.
+      iExists _, _.
+      iFrame.
+    }
+    iIntros (l) "#Hl". wp_let.
+    wp_apply (par_spec (λ _, own γ1 (◯ Excl' 777)) (λ _, own γ2 (◯ Excl' 777))
+                with "[Hγ1◯] [Hγ2◯]").
+    (* wp_apply (wp_par (λ _, own γ1 (◯ Excl' 777)) (λ _, own γ2 (◯ Excl' 777)) *)
+    (*             with "[Hγ1◯] [Hγ2◯]"). *)
+    - wp_apply (acquire_spec with "Hl"). iDestruct 1 as (n1 n2) "(Hr & Hγ1● & Hγ2●)".
+      wp_seq. wp_load. wp_op. wp_store.
+      iDestruct (ghost_var_agree with "Hγ1● Hγ1◯") as %->.
+      iMod (ghost_var_update γ1 777 with "Hγ1● Hγ1◯") as "[Hγ1● Hγ1◯]".
+      wp_apply (release_spec with "[- $Hl Hγ1◯]"); [|by auto].
+      iExists _, _. iFrame "Hγ1● Hγ2●".
+  Abort.
+
 End proof2.
 
 (** 3rd proof : we prove that the program returns 4 exactly, but using a
@@ -130,6 +231,10 @@ Section proof3.
 
   Definition parallel_add_inv_3 (r : loc) (γ : gname) : iProp Σ :=
     (∃ n : nat, r ↦ #n ∗ own γ (●! n))%I.
+  (* Definition parallel_add_inv_2 (r : loc) (γ1 γ2 : gname) : iProp Σ := *)
+  (*   (∃ n1 n2 : Z, r ↦ #(n1 + n2) *)
+  (*           ∗ own γ1 (● (Excl' n1)) ∗ own γ2 (● (Excl' n2)))%I. *)
+
 
   (** *Exercise*: finish the missing cases of the proof. *)
   Lemma parallel_add_spec_3 :
@@ -140,10 +245,14 @@ Section proof3.
     iMod (own_alloc (●! 0%nat ⋅ ◯! 0%nat)) as (γ) "[Hγ● [Hγ1◯ Hγ2◯]]"; [done|].
     wp_apply (newlock_spec (parallel_add_inv_3 r γ) with "[Hr Hγ●]").
     { (* exercise *)
-      admit. }
+      unfold parallel_add_inv_3.
+      iExists _. iFrame.
+    }
     iIntros (l) "#Hl". wp_let.
-    wp_apply (wp_par (λ _, own γ (◯!{1/2} 2%nat)) (λ _, own γ (◯!{1/2} 2%nat))
+    wp_apply (par_spec (λ _, own γ (◯!{1/2} 2%nat)) (λ _, own γ (◯!{1/2} 2%nat))
                 with "[Hγ1◯] [Hγ2◯]").
+    (* wp_apply (wp_par (λ _, own γ (◯!{1/2} 2%nat)) (λ _, own γ (◯!{1/2} 2%nat)) *)
+    (*             with "[Hγ1◯] [Hγ2◯]"). *)
     - wp_apply (acquire_spec with "Hl"). iDestruct 1 as (n) "[Hr Hγ●]".
       wp_seq. wp_load. wp_op. wp_store.
       iMod (own_update_2 _ _ _ (●! (n+2) ⋅ ◯!{1/2}2)%nat with "Hγ● Hγ1◯") as "[Hγ● Hγ1◯]".
@@ -152,8 +261,36 @@ Section proof3.
       wp_apply (release_spec with "[$Hl Hr Hγ●]"); [|by auto].
       iExists _. iFrame. by rewrite Nat2Z.inj_add.
     - (* exercise *)
-      admit.
+      wp_apply (acquire_spec); eauto.
+      iDestruct 1 as (n) "[LOC OWN]".
+      wp_seq. wp_load. wp_op. wp_store.
+      iMod (own_update_2 _ _ _ (●! (n+2) ⋅ ◯!{1/2}2)%nat with "OWN Hγ2◯") as "[OWN Hγ2◯]".
+      { rewrite (comm plus).
+        by apply frac_auth_update, (op_local_update_discrete n 0 2)%nat. }
+      (* iDestruct (ghost_var_agree with "Hγ2● Hγ2◯") as %->. *)
+      (* iMod (ghost_var_update γ2 2 with "Hγ2● Hγ2◯") as "[Hγ2● Hγ2◯]". *)
+      wp_apply (release_spec with "[LOC OWN]"); cycle 1.
+      {
+        iIntros.
+        Print frac_auth.
+        Print lib.own.
+        eauto.
+      }
+      iSplit; eauto.
+      unfold parallel_add_inv_3.
+      iExists _. iFrame.
+      rewrite Nat2Z.inj_add. auto.
     - (* exercise *)
-      admit.
-  Admitted.
+      iIntros (v1 v2) "[A B]".
+      iNext.
+      wp_seq.
+      wp_apply (acquire_spec); eauto.
+      iDestruct 1 as (n) "[LOC OWN]".
+      wp_exec.
+
+      iCombine "A B" as "OWN0".
+      iDestruct (own_valid_2 with "OWN OWN0") as %->%frac_auth_agreeL.
+      by iApply "Post".
+  Qed.
+
 End proof3.

@@ -55,7 +55,7 @@ Lemma swap_spec x y v1 v2 :
 Proof.
   iIntros (Φ) "[Hx Hy] Post".
   unfold swap.
-  wp_lam. wp_lam.
+  wp_lam. wp_let.
   wp_load. wp_let.
   wp_load. wp_store.
   wp_store.
@@ -65,12 +65,22 @@ Proof.
   - iApply "Hy".
 Qed.
 
+
+
+(* wp_load : *)
+(* ∀ (Σ : gFunctors) (H : heapG Σ) (s : stuckness) (E : coPset) (l : loc) (q : Qp) (v : val) *)
+(* (Φ : val → uPred (iResUR Σ)), ▷ l ↦{q} v -∗ ▷ (l ↦{q} v -∗ Φ v) -∗ WP ! #l @ s; E {{ v, Φ v }} *)
+
+(* "'WP' e @ s ; E {{ v , Q } }" := wp s E e (fun v => Q) : uPred_scope *)
+
+
+
 (* Same lemma, but using a bit of automation to shorten the proof. *)
 Lemma swap_spec_2 x y v1 v2 :
   {{{ x ↦ v1 ∗ y ↦ v2 }}} swap #x #y {{{ RET #(); x ↦ v2 ∗ y ↦ v1 }}}.
 Proof.
   iIntros (Φ) "[??] Post".
-  wp_lam. wp_lam. wp_load. wp_let. wp_load. wp_store. wp_store.
+  wp_lam. wp_let. wp_load. wp_let. wp_load. wp_store. wp_store.
   iApply "Post". iFrame.
 Qed.
 
@@ -88,9 +98,28 @@ using [wp_pure _] it will symbolically execute *any* pure redex. *)
 Lemma swap_spec_2_more_automation x y v1 v2 :
   {{{ x ↦ v1 ∗ y ↦ v2 }}} swap #x #y {{{ RET #(); x ↦ v2 ∗ y ↦ v1 }}}.
 Proof.
-  iIntros (Φ) "[??] Post". wp_exec.
+  iIntros (Φ) "[??] Post". unfold swap. wp_lam. wp_exec.
   iApply "Post". iFrame.
 Qed.
+
+Definition wp_bind_test : val := λ: "x" "y",
+  ("x" + "y") + ("x" + "y")
+.
+
+Lemma wp_bind_test_spec x y (v1 v2: Z):
+  {{{ ⌜x = #(v1) /\ y = #(v2)⌝ }}}
+    wp_bind_test x y
+  {{{ z, RET #z; ⌜(z = (v1 + v2 + v1 + v2)%Z) /\ x = #(v1) /\ y = #(v2)⌝ }}}
+.
+Proof.
+  iIntros (Φ) "A B".
+  unfold wp_bind_test.
+  wp_lam. wp_let.
+  iDestruct "A" as "[#C #D]".
+  Fail wp_bind (_ + _)%E.
+Abort.
+(* QQQQQQ: deterministic? which redux? *)
+(* QQQQQQ: complete set of tactics? completeness of WP? *)
 
 Lemma rotate_r_spec x y z v1 v2 v3 :
   {{{ x ↦ v1 ∗ y ↦ v2 ∗ z ↦ v3 }}}
@@ -100,7 +129,7 @@ Proof.
   (* As in Coq, the IPM introduction pattern (p1 & p2 & .. & pn) ] is syntactic
   sugar for [ [p1 [p2 [... pn]]] ]. *)
   iIntros (Φ) "(Hx & Hy & Hz) Post".
-  unfold rotate_r. do 3 wp_lam.
+  unfold rotate_r. wp_lam. wp_let. wp_let.
   wp_bind (swap _ _).
   iApply (swap_spec with "[Hy Hz]").
   { iFrame. }
@@ -108,7 +137,7 @@ Proof.
   [simpl]. *)
   iNext. iIntros "[Hy Hz] /=". wp_seq.
   (* We can also immediately frame hypothesis when using a lemma: *)
-  iApply (swap_spec with "[$Hx $Hy]"); iNext; iIntros "[Hx Hy]".
+  iApply (swap_spec with "[$Hx $Hy]"). iNext. iIntros "[Hx Hy]".
   iApply "Post". iFrame.
 Qed.
 
@@ -117,7 +146,7 @@ Lemma rotate_r_spec_again x y z v1 v2 v3 :
     rotate_r #x #y #z
   {{{ RET #(); x ↦ v3 ∗ y ↦ v1 ∗ z ↦ v2 }}}.
 Proof.
-  iIntros (Φ) "(Hx & Hy & Hz) Post". do 3 wp_lam.
+  iIntros (Φ) "(Hx & Hy & Hz) Post". wp_lam. do 2 wp_let.
   (* We can shorten the above a bit: Instead of using the [iApply] tactic, we
   can use [wp_apply] which automatically uses [wp_bind] first. Also, it strips
   the later [▷] by calling [iNext] afterwards. *)
@@ -137,6 +166,32 @@ Lemma rotate_l_spec x y z v1 v2 v3 :
     rotate_l #x #y #z
   {{{ RET #(); x ↦ v2 ∗ y ↦ v3 ∗ z ↦ v1 }}}.
 Proof.
-  (* exercise *)
-Admitted.
+  iIntros (Φ) "(A & B & C) D".
+  unfold rotate_l.
+  wp_lam. do 2 wp_let.
+  unfold swap. wp_lam. wp_exec. wp_lam. wp_exec. iApply "D". iFrame.
+Qed.
+
+Lemma rotate_l_spec' x y z v1 v2 v3 :
+  {{{ x ↦ v1 ∗ y ↦ v2 ∗ z ↦ v3 }}}
+    rotate_l #x #y #z
+  {{{ RET #(); x ↦ v2 ∗ y ↦ v3 ∗ z ↦ v1 }}}.
+Proof.
+  (* iIntros (Φ) "A D". *)
+  iIntros (Φ) "(A & B & C) D".
+  unfold rotate_l.
+  wp_lam. do 2 wp_let.
+  wp_bind (swap _ _).
+  iApply (swap_spec with "[A B]").
+  { iFrame. }
+  iNext.
+  iIntros "(E & F)".
+  simpl.
+  wp_seq.
+  iApply (swap_spec with "[C F]").
+  { iFrame. }
+  iNext. iIntros.
+  iApply "D". iFrame.
+Qed.
+
 End proof.

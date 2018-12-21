@@ -23,11 +23,12 @@ Section proof1.
     iMod (inv_alloc N _ (∃ n : Z, l ↦ #n ∧ ⌜ Zeven n ⌝)%I with "[Hl]") as "#?".
     { iExists 0. auto. }
     wp_bind (_ ||| _)%E.
-    wp_apply (wp_par (λ _, True)%I (λ _, True)%I).
-    - iInv N as (n) ">[Hl %]" "Hclose".
+    (* wp_apply (wp_par (λ _, True)%I (λ _, True)%I). *)
+    wp_apply (par_spec (λ _, True)%I (λ _, True)%I).
+    - wp_lam. iInv N as (n) ">[Hl %]" "Hclose".
       wp_faa. iMod ("Hclose" with "[Hl]"); first eauto 10.
       auto.
-    - iInv N as (n) ">[Hl %]" "Hclose".
+    - wp_lam. iInv N as (n) ">[Hl %]" "Hclose".
       wp_faa. iMod ("Hclose" with "[Hl]"); first eauto 10.
       auto.
     - iIntros (v1 v2) "_". iNext. wp_seq.
@@ -103,10 +104,10 @@ Section proof2.
     iDestruct "Hγ" as "[Hγ1 Hγ2]".
     iMod (inv_alloc _ _ (proof2_inv γ l) with "[Hl Hauth]") as "#Hinv".
     { iNext. iExists 0%nat. iFrame. }
-    wp_apply (wp_par (λ _, own γ (◯!{1/2} 2%nat))
+    wp_apply (par_spec (λ _, own γ (◯!{1/2} 2%nat))
                      (λ _, own γ (◯!{1/2} 2%nat)) with "[Hγ1] [Hγ2]").
-    - iApply (par_inc_FAA_spec 0 2 with "[$]"); auto.
-    - iApply (par_inc_FAA_spec 0 2 with "[$]"); auto.
+    - wp_lam. iApply (par_inc_FAA_spec 0 2 with "[$]"); auto.
+    - wp_lam. iApply (par_inc_FAA_spec 0 2 with "[$]"); auto.
     - iIntros (v1 v2) "[Hγ1 Hγ2] !>". iCombine "Hγ1 Hγ2" as "Hγ". simpl.
       wp_seq. iInv N as (m) ">[Hauth Hx]" "Hclose".
       iDestruct (frac_auth_agree with "Hauth Hγ") as %->.
@@ -123,8 +124,8 @@ Section proof2.
   Proof.
     iIntros (Φ) "[#? Hγ] Post /=".
     iInduction n as [|n] "IH" forall (q Φ).
-    { do 2 wp_let. wp_op. wp_if. by iApply "Post". }
-    rewrite Nat2Z.inj_succ. do 2 wp_let.
+    { wp_lam. wp_let. wp_op. wp_if. by iApply "Post". }
+    rewrite Nat2Z.inj_succ. do 2 (wp_lam + wp_let).
     wp_op. case_bool_decide; first lia. wp_if.
     iDestruct "Hγ" as "[Hγ1 Hγ2]".
     wp_apply (wp_par (λ _, own γ (◯!{q/2} 2%nat))

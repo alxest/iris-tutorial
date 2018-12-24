@@ -184,6 +184,9 @@ Section proof2.
       omega.
     - (* exercise *)
       iIntros (v1 v2) "OWN".
+    (***********************************************************************)
+    (* splitted ghost variables are updated in each side, and merged here! *)
+    (***********************************************************************)
       iNext.
       wp_seq.
       wp_apply (acquire_spec with "Hl"). iDestruct 1 as (n1 n2) "(Hr & Hγ1● & Hγ2●)".
